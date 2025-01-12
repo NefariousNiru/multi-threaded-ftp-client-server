@@ -13,9 +13,12 @@
 #define BACKLOG_QUEUE_SIZE 64
 #define BUFFER_SIZE 1024
 
-
+/**
+ * @brief Creates a dual-stack IPv4 and IPv6 socket.
+ * 
+ * @return int The socket file descriptor on success, or -1 on failure.
+ */
 int create_socket() {
-    // Create a dual-stack IPv4 and IPv6 TCP-SOCKET
     int sock = socket(AF_INET6, SOCK_STREAM, 0);
     if (sock == - 1) {
         std::cerr << "Failed to create socket. Exiting! \n";
@@ -26,6 +29,12 @@ int create_socket() {
 }
 
 
+/**
+ * @brief Configures the socket to support both IPv4 and IPv6 connections.
+ * 
+ * @param sock The socket file descriptor.
+ * @return bool True if the configuration is successful, otherwise false.
+ */
 bool set_dual_stack(int sock) {
     // Accept both IPv4 & IPv6
     int opt = 0;
@@ -39,6 +48,13 @@ bool set_dual_stack(int sock) {
 }
 
 
+/**
+ * @brief Binds the socket to a specified port for accepting connections.
+ * 
+ * @param sock The socket file descriptor.
+ * @param server_addr The sockaddr_in6 structure representing the server address.
+ * @return bool True if binding is successful, otherwise false.
+ */
 bool bind_socket(int sock, sockaddr_in6 &server_addr) {
     // Define server address structure to the specified port 
     memset(&server_addr, 0, sizeof(server_addr));
@@ -57,6 +73,12 @@ bool bind_socket(int sock, sockaddr_in6 &server_addr) {
 }
 
 
+/**
+ * @brief Puts the socket into listening mode for incoming connections.
+ * 
+ * @param sock The socket file descriptor.
+ * @return bool True if the socket successfully starts listening, otherwise false.
+ */
 bool start_listening(int sock) {
     // Listen for Incoming TCP-Connection
     if (listen(sock, BACKLOG_QUEUE_SIZE) < 0) {
@@ -69,6 +91,11 @@ bool start_listening(int sock) {
 }
 
 
+/**
+ * @brief Handles a single client connection.
+ * 
+ * @param sock The client's socket file descriptor.
+ */
 void handle_client(int sock) {
     const char *welcome_msg = "Welcome to the dual-stack server!\n";
     send(sock, welcome_msg, strlen(welcome_msg), 0);
@@ -78,6 +105,12 @@ void handle_client(int sock) {
 }
 
 
+/**
+ * @brief Retrieves the IP address of the connected client.
+ * 
+ * @param client_addr The sockaddr_in6 structure representing the client's address.
+ * @return std::string The client's IP address as a human-readable string.
+ */
 std::string get_client_ip(const sockaddr_in6 &client_addr) {
     char client_ip[INET6_ADDRSTRLEN];
 
@@ -97,6 +130,11 @@ std::string get_client_ip(const sockaddr_in6 &client_addr) {
 }
 
 
+/**
+ * @brief Accepts and processes incoming client connections using a mutli-threaded pool.
+ * 
+ * @param server_sock The server's socket file descriptor.
+ */
 void accept_incoming_connections(int server_sock) {
     // Accept multiple client connections in a loop
 
@@ -121,6 +159,12 @@ void accept_incoming_connections(int server_sock) {
     }
 }
 
+
+/**
+ * @brief The main entry point of the server application.
+ * 
+ * @return int Exit code (0 for success, 1 for failure).
+ */
 int main() {
     // Create a dual-stack socket - Accept both IPv6 and IPv4
     int server_sock = create_socket();
