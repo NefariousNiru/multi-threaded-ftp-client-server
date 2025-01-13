@@ -9,9 +9,9 @@
 
 
 #define THREAD_POOL_SIZE (std::thread::hardware_concurrency() > 0 ? std::thread::hardware_concurrency() : 4)
-#define PORT 8080
 #define BACKLOG_QUEUE_SIZE 64
 #define BUFFER_SIZE 1024
+
 
 /**
  * @brief Creates a dual-stack IPv4 and IPv6 socket.
@@ -55,7 +55,7 @@ bool set_dual_stack(int sock) {
  * @param server_addr The sockaddr_in6 structure representing the server address.
  * @return bool True if binding is successful, otherwise false.
  */
-bool bind_socket(int sock, sockaddr_in6 &server_addr) {
+bool bind_socket(int sock, sockaddr_in6 &server_addr, int PORT) {
     // Define server address structure to the specified port 
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin6_family = AF_INET6;
@@ -79,7 +79,7 @@ bool bind_socket(int sock, sockaddr_in6 &server_addr) {
  * @param sock The socket file descriptor.
  * @return bool True if the socket successfully starts listening, otherwise false.
  */
-bool start_listening(int sock) {
+bool start_listening(int sock, int PORT) {
     // Listen for Incoming TCP-Connection
     if (listen(sock, BACKLOG_QUEUE_SIZE) < 0) {
         std::cerr << "Listen failed. \n";
@@ -136,11 +136,10 @@ std::string get_client_ip(const sockaddr_in6 &client_addr) {
  * @param server_sock The server's socket file descriptor.
  */
 void accept_incoming_connections(int server_sock) {
-    // Accept multiple client connections in a loop
-
+    
     ThreadPool pool(THREAD_POOL_SIZE);
 
-    while (true) {
+    while (true) {     // Accept multiple client connections in a loop
         sockaddr_in6 client_addr;
         socklen_t client_len = sizeof(client_addr);
         int client_sock = accept(server_sock, (sockaddr*)&client_addr, &client_len);
@@ -160,12 +159,26 @@ void accept_incoming_connections(int server_sock) {
 }
 
 
+int get_port(int argc, char *argv[]) {
+    int port;
+    if (argc != 2) {
+        std::cout << "PORT not specified. Using default PORT 8080\n";
+        port = 8080;
+    } else {
+        port = std::stoi(argv[1]);
+    }
+    return port;
+}
+
 /**
  * @brief The main entry point of the server application.
  * 
  * @return int Exit code (0 for success, 1 for failure).
  */
-int main() {
+int main(int argc, char *argv[]) {
+    // Get port argument
+    int port = get_port(argc, argv);
+
     // Create a dual-stack socket - Accept both IPv6 and IPv4
     int server_sock = create_socket();
     if (server_sock == -1) return 1;
@@ -178,13 +191,13 @@ int main() {
     
     // Bind the socket
     sockaddr_in6 server_addr;
-    if (!bind_socket(server_sock, server_addr)) {
+    if (!bind_socket(server_sock, server_addr, port)) {
         close(server_sock);
         return 1;
     }
 
     //  Lsiten for connections
-    if (!start_listening(server_sock)) {
+    if (!start_listening(server_sock, port)) {
         close(server_sock);
         return 1;
     }
