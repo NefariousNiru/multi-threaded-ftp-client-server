@@ -6,8 +6,28 @@
 #include <sys/socket.h>
 #include <filesystem>
 #include <sys/stat.h> 
+#include <fstream>
+#include <unordered_map>
+#include <functional>
+
 
 #define BUFFER_SIZE 1024
+
+
+/**
+ * @brief Sends a standardized response to the client.
+ * 
+ * This function formats the response as "<status>: <message>\n" and sends it to the client.
+ * It is useful for maintaining consistency in server-client communication.
+ * 
+ * @param sock The client's socket file descriptor.
+ * @param status A short status string (e.g., "SUCCESS", "ERROR") indicating the result of the operation.
+ * @param message A detailed message providing context or additional information about the status.
+ */
+void send_response(int sock, const std::string &status, const std::string &message) {
+    std::string response = status + ": " + message + "\n";
+    send(sock, response.c_str(), response.size(), 0);
+}
 
 
 /**
@@ -23,6 +43,80 @@ std::string trim(const std::string &str) {
 
 
 /**
+ * @brief Receives a file from the client and saves it on the server.
+ * 
+ * @param sock The client's socket file descriptor.
+ * @param filename The name of the file to save on the server.
+ */
+void handle_put(int sock, const std::string &filename) {
+    if (filename.empty()) {
+        send_response(sock, "ERROR", "File name not specified.");
+        return;
+    }
+
+    std::ofstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        send_response(sock, "ERROR", "Unable to create file.");
+        return;
+    }
+
+    send_response(sock, "SUCCESS", "READY_TO_RECEIVE");
+
+    char buffer[BUFFER_SIZE];
+    ssize_t bytes_received;
+    while ((bytes_received = recv(sock, buffer, sizeof(buffer), 0)) > 0) {
+        if (std::string(buffer, bytes_received).find("FILE_TRANSFER_END\n") != std::string::npos) {
+            break;
+        }
+        file.write(buffer, bytes_received);
+    }
+
+    file.close();
+
+    if (bytes_received < 0) {
+        send_response(sock, "ERROR", "File transfer failed.");
+    } else {
+        send_response(sock, "SUCCESS", "File transfer completed.");
+    }
+}
+
+
+/**
+ * @brief Sends a file from the server to the client.
+ * 
+ * @param sock The client's socket file descriptor.
+ * @param filename The name of the file to send.
+ */
+void handle_get(int sock, const std::string &filename) {
+    if (filename.empty()) {
+        send_response(sock, "ERROR", "File name not specified.");
+        return;
+    }
+
+    std::ifstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        send_response(sock, "ERROR", "Unable to open file.");
+        return;
+    }
+
+    send_response(sock, "SUCCESS", "FILE_TRANSFER_START");
+
+    char buffer[BUFFER_SIZE];
+    while (file.read(buffer, sizeof(buffer))) {
+        send(sock, buffer, file.gcount(), 0);
+    }
+
+    if (file.gcount() > 0) {
+        send(sock, buffer, file.gcount(), 0);
+    }
+
+    send_response(sock, "\n\nSUCCESS", "FILE_TRANSFER_END");
+
+    file.close();
+}
+
+
+/**
  * @brief Creates a new directory in the current working directory.
  * 
  * @param sock The client's socket file descriptor.
@@ -30,17 +124,14 @@ std::string trim(const std::string &str) {
  */
 void handle_mkdir(int sock, const std::string &directory_name) {
     if (directory_name.empty()) {
-        const char *error_msg = "Error: Directory name not specified.\n";
-        send(sock, error_msg, strlen(error_msg), 0);
+        send_response(sock, "ERROR", "Directory name not specified.");
         return;
     }
 
     if (mkdir(directory_name.c_str(), 0755) == 0) {
-        const char *success_msg = "Directory created successfully.\n";
-        send(sock, success_msg, strlen(success_msg), 0);
+        send_response(sock, "SUCCESS", "Directory created successfully.");
     } else {
-        const char *error_msg = "Error: Unable to create directory.\n";
-        send(sock, error_msg, strlen(error_msg), 0);
+        send_response(sock, "ERROR", "Unable to create directory.");
     }
 }
 
@@ -53,17 +144,14 @@ void handle_mkdir(int sock, const std::string &directory_name) {
  */
 void handle_delete(int sock, const std::string &filename) {
     if (filename.empty()) {
-        const char *error_msg = "Error: File name not specified.\n";
-        send(sock, error_msg, strlen(error_msg), 0);
+        send_response(sock, "ERROR", "File name not specified.");
         return;
     }
 
     if (remove(filename.c_str()) == 0) {
-        const char *success_msg = "File deleted successfully.\n";
-        send(sock, success_msg, strlen(success_msg), 0);
+        send_response(sock, "SUCCESS", "File deleted successfully.");
     } else {
-        const char *error_msg = "Error: Unable to delete file.\n";
-        send(sock, error_msg, strlen(error_msg), 0);
+        send_response(sock, "ERROR", "Unable to delete file.");
     }
 }
 
@@ -76,17 +164,14 @@ void handle_delete(int sock, const std::string &filename) {
  */
 void handle_cd(int sock, const std::string &directory) {
     if (directory.empty()) {
-        const char *error_msg = "Error: Directory not specified.\n";
-        send(sock, error_msg, strlen(error_msg), 0);
+        send_response(sock, "ERROR", "Directory not specified.");
         return;
     }
 
     if (chdir(directory.c_str()) == 0) {
-        const char *success_msg = "Directory changed successfully.\n";
-        send(sock, success_msg, strlen(success_msg), 0);
+        send_response(sock, "SUCCESS", "Directory changed successfully.");
     } else {
-        const char *error_msg = "Error: Unable to change directory.\n";
-        send(sock, error_msg, strlen(error_msg), 0);
+        send_response(sock, "ERROR", "Unable to change directory.");
     }
 }
 
@@ -97,11 +182,9 @@ void handle_cd(int sock, const std::string &directory) {
  * @param sock The client's socket file descriptor.
  */
 void handle_ls(int sock) {
-    std::cout << "im here" ;
     DIR *dir = opendir(".");
     if (dir == nullptr) {
-        const char *error_msg = "Error: Unable to open directory.\n";
-        send(sock, error_msg, strlen(error_msg), 0);
+        send_response(sock, "ERROR", "Unable to open directory.");
         return;
     }
 
@@ -113,8 +196,11 @@ void handle_ls(int sock) {
     }
 
     closedir(dir);
-    send(sock, file_list.c_str(), file_list.size(), 0);
-    send(sock, "\n", 1, 0);
+    if (!file_list.empty()) {
+        send(sock, file_list.c_str(), file_list.size(), 0);
+    } else {
+        send_response(sock, "SUCCESS", "Directory is empty.");
+    }
 }
 
 
@@ -129,9 +215,47 @@ void handle_pwd(int sock) {
         send(sock, cwd, strlen(cwd), 0);
         send(sock, "\n", 1, 0);
     } else {
-        const char *error_msg = "Error: Unable to retrieve current directory.\n";
-        send(sock, error_msg, strlen(error_msg), 0);
+        send_response(sock, "ERROR", "Unable to retrieve current directory.");
     }
+}
+
+
+using CommandMap = std::unordered_map<std::string, std::function<void(int, const std::string &)>>;
+/**
+ * @brief Creates and initializes the command map.
+ * 
+ * This function sets up the `CommandMap` with supported FTP commands and their 
+ * corresponding handler functions. Commands are categorized into those with 
+ * and without arguments:
+ * 
+ * - Commands without arguments:
+ *   - "pwd" -> Calls `handle_pwd` to print the current working directory.
+ *   - "ls" -> Calls `handle_ls` to list files and directories in the current directory.
+ * 
+ * - Commands with arguments:
+ *   - "cd <directory>" -> Calls `handle_cd` to change the current working directory.
+ *   - "mkdir <directory>" -> Calls `handle_mkdir` to create a new directory.
+ *   - "delete <filename>" -> Calls `handle_delete` to delete a file.
+ *   - "get <filename>" -> Calls `handle_get` to send a file to the client.
+ *   - "put <filename>" -> Calls `handle_put` to receive a file from the client.
+ * 
+ * @return CommandMap The initialized map associating command strings with their handlers.
+ */
+CommandMap create_command_map() {
+    CommandMap command_map;
+
+    // Commands without arguments
+    command_map["pwd"] = [](int sock, const std::string &) { handle_pwd(sock); };
+    command_map["ls"] = [](int sock, const std::string &) { handle_ls(sock); };
+
+    // Commands with arguments
+    command_map["cd"] = [](int sock, const std::string &arg) { handle_cd(sock, arg); };
+    command_map["mkdir"] = [](int sock, const std::string &arg) { handle_mkdir(sock, arg); };
+    command_map["delete"] = [](int sock, const std::string &arg) { handle_delete(sock, arg); };
+    command_map["get"] = [](int sock, const std::string &arg) { handle_get(sock, arg); };
+    command_map["put"] = [](int sock, const std::string &arg) { handle_put(sock, arg); };
+
+    return command_map;
 }
 
 
@@ -142,22 +266,21 @@ void handle_pwd(int sock) {
  * @param sock The client's socket file descriptor.
  */
 void execute_command(const std::string &command, int sock) {
-    if (command.compare("pwd") == 0) {
-        handle_pwd(sock);
-    } else if (command.compare("ls") == 0) {
-        handle_ls(sock);
-    } else if (command.starts_with("cd ")) {
-        std::string directory = command.substr(3);
-        handle_cd(sock, trim(directory));
-    } else if (command.starts_with("mkdir ")) {
-        std::string directory_name = command.substr(6);
-        handle_mkdir(sock, trim(directory_name));
-    } else if (command.starts_with("delete ")) {
-        std::string filename = command.substr(7);
-        handle_delete(sock, trim(filename));
+    // Create the command map
+    static CommandMap command_map = create_command_map();
+
+    // Parse the command and argument
+    size_t space_pos = command.find(' ');
+    std::string cmd = (space_pos == std::string::npos) ? command : command.substr(0, space_pos);
+    std::string arg = (space_pos == std::string::npos) ? "" : trim(command.substr(space_pos + 1));
+
+    // Find the command in the map
+    auto it = command_map.find(cmd);
+    if (it != command_map.end()) {
+        // Call the associated handler
+        it->second(sock, arg);
     } else {
-        const char *error_msg = "Invalid command. \n";
-        send(sock, error_msg, strlen(error_msg), 0);
+        send_response(sock, "ERROR", "Invalid command.");
     }
 }
 
@@ -168,7 +291,7 @@ void execute_command(const std::string &command, int sock) {
  * @param sock The client's socket file descriptor.
  */
 void handle_client(int sock) {
-    const char *welcome_msg = "Connected to MyFTPServer!";
+    const char *welcome_msg = "\033[32mConnected to MyFTPServer!\033[0m";
     send(sock, welcome_msg, strlen(welcome_msg), 0);
 
     char buffer[BUFFER_SIZE];
@@ -178,7 +301,7 @@ void handle_client(int sock) {
         // Receive commands from client 
         ssize_t bytes_received = recv(sock, buffer, BUFFER_SIZE - 1, 0);
         if (bytes_received <= 0) {
-            std::cout << "Client Disconnected. \n";
+            std::cout << "\033[31mClient Disconnected.\033[0m\n";
             break;
         }
 
@@ -186,6 +309,8 @@ void handle_client(int sock) {
         command = trim(command); 
 
         if (command == "quit") {
+            std::cout << "\033[31mClient Disconnected.\033[0m\n";
+            send(sock, "\033[31mBye!\033[0m\n", 9, 0);
             break;
         } 
 
