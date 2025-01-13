@@ -9,6 +9,8 @@
 #include <fstream>
 #include <unordered_map>
 #include <functional>
+#include <cerrno>
+#include <cstring>
 
 
 #define BUFFER_SIZE 1024
@@ -95,7 +97,20 @@ void handle_get(int sock, const std::string &filename) {
 
     std::ifstream file(filename, std::ios::binary);
     if (!file.is_open()) {
-        send_response(sock, "ERROR", "Unable to open file.");
+        switch (errno) {
+            case ENOENT:
+                send_response(sock, "ERROR", "404 - File not found.");
+                break;
+            case EACCES:
+                send_response(sock, "ERROR", "Permission denied.");
+                break;
+            case EISDIR:
+                send_response(sock, "ERROR", "Path is a directory, not a file.");
+                break;
+            default:
+                send_response(sock, "ERROR", std::string("Unable to open file: ") + std::strerror(errno));
+                break;
+        }
         return;
     }
 
@@ -151,7 +166,23 @@ void handle_delete(int sock, const std::string &filename) {
     if (remove(filename.c_str()) == 0) {
         send_response(sock, "SUCCESS", "File deleted successfully.");
     } else {
-        send_response(sock, "ERROR", "Unable to delete file.");
+        switch (errno) {
+            case ENOENT:
+                send_response(sock, "ERROR", "404 - File not found.");
+                break;
+            case EACCES:
+                send_response(sock, "ERROR", "Permission denied.");
+                break;
+            case EPERM:
+                send_response(sock, "ERROR", "Operation not permitted.");
+                break;
+            case EISDIR:
+                send_response(sock, "ERROR", "Cannot delete a directory using this command.");
+                break;
+            default:
+                send_response(sock, "ERROR", std::strerror(errno));
+                break;
+        }
     }
 }
 
