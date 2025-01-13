@@ -6,6 +6,7 @@
 #include <thread>
 #include <arpa/inet.h>
 #include "thread_pool.h"
+#include "client_handler.h"
 
 
 #define THREAD_POOL_SIZE (std::thread::hardware_concurrency() > 0 ? std::thread::hardware_concurrency() : 4)
@@ -88,20 +89,6 @@ bool start_listening(int sock, int PORT) {
     }
     std::cout << "Server is listening @ PORT: \e[0;34m" << PORT << "\e[0;0m\n";
     return true;
-}
-
-
-/**
- * @brief Handles a single client connection.
- * 
- * @param sock The client's socket file descriptor.
- */
-void handle_client(int sock) {
-    const char *welcome_msg = "Welcome to the dual-stack server!\n";
-    send(sock, welcome_msg, strlen(welcome_msg), 0);
-    std::cout << "Sent welcome message to the client.\n";
-    close(sock);
-    std::cout << "Client connection closed.\n";
 }
 
 
