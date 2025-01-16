@@ -243,8 +243,8 @@ void handle_ls(int sock) {
 void handle_pwd(int sock) {
     char cwd[BUFFER_SIZE];
     if (getcwd(cwd, sizeof(cwd)) != nullptr) {
+        std::string command = std::string(cwd) + "\n";
         send(sock, cwd, strlen(cwd), 0);
-        send(sock, "\n", 1, 0);
     } else {
         send_response(sock, "ERROR", "Unable to retrieve current directory.");
     }
@@ -322,7 +322,7 @@ void execute_command(const std::string &command, int sock) {
  * @param sock The client's socket file descriptor.
  */
 void handle_client(int sock) {
-    const char *welcome_msg = "\033[32mConnected to MyFTPServer!\033[0m";
+    const char *welcome_msg = "\033[32mConnected to MyFTPServer!\033[0m \n";
     send(sock, welcome_msg, strlen(welcome_msg), 0);
 
     char buffer[BUFFER_SIZE];
