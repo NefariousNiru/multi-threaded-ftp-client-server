@@ -25,7 +25,7 @@
  * @param sock The client's socket file descriptor.
  * @param status A short status string (e.g., "SUCCESS", "ERROR") indicating the result of the operation.
  * @param message A detailed message providing context or additional information about the status.
- */
+ */ 
 void send_response(int sock, const std::string &status, const std::string &message) {
     std::string response = status + ": " + message + "\n";
     send(sock, response.c_str(), response.size(), 0);
