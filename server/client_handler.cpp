@@ -33,6 +33,21 @@ void send_response(int sock, const std::string &status, const std::string &messa
 
 
 /**
+ * @brief Sends a standardized response to the client.
+ * 
+ * This function formats the response as "<message>\n" and sends it to the client.
+ * It is useful for maintaining consistency in server-client communication.
+ * 
+ * @param sock The client's socket file descriptor.
+ * @param message A detailed message providing context or additional information about the status.
+ */ 
+void send_response(int sock, const std::string &message) {
+    std::string response = message + "\n";
+    send(sock, response.c_str(), response.size(), 0);
+}
+
+
+/**
  * @brief Trims trailing whitespace, including '\n' and '\r'
  * 
  * @param str  String to be cleaned
@@ -118,6 +133,7 @@ void handle_get(int sock, const std::string &filename) {
 
     char buffer[BUFFER_SIZE];
     while (file.read(buffer, sizeof(buffer))) {
+        // Binary files - Do not use send_response()
         send(sock, buffer, file.gcount(), 0);
     }
 
@@ -125,7 +141,7 @@ void handle_get(int sock, const std::string &filename) {
         send(sock, buffer, file.gcount(), 0);
     }
 
-    send_response(sock, "\n\nSUCCESS", "FILE_TRANSFER_END");
+    send_response(sock, "FILE_TRANSFER_END");
 
     file.close();
 }
@@ -200,7 +216,7 @@ void handle_cd(int sock, const std::string &directory) {
     }
 
     if (chdir(directory.c_str()) == 0) {
-        send_response(sock, "SUCCESS", "Directory changed successfully.");
+        send_response(sock, "SUCCESS", "Directory changed.");
     } else {
         send_response(sock, "ERROR", "Unable to change directory.");
     }
@@ -228,7 +244,7 @@ void handle_ls(int sock) {
 
     closedir(dir);
     if (!file_list.empty()) {
-        send(sock, file_list.c_str(), file_list.size(), 0);
+        send_response(sock, file_list);
     } else {
         send_response(sock, "SUCCESS", "Directory is empty.");
     }
@@ -243,8 +259,7 @@ void handle_ls(int sock) {
 void handle_pwd(int sock) {
     char cwd[BUFFER_SIZE];
     if (getcwd(cwd, sizeof(cwd)) != nullptr) {
-        std::string command = std::string(cwd) + "\n";
-        send(sock, cwd, strlen(cwd), 0);
+        send_response(sock, std::string(cwd));
     } else {
         send_response(sock, "ERROR", "Unable to retrieve current directory.");
     }
@@ -308,7 +323,6 @@ void execute_command(const std::string &command, int sock) {
     // Find the command in the map
     auto it = command_map.find(cmd);
     if (it != command_map.end()) {
-        // Call the associated handler
         it->second(sock, arg);
     } else {
         send_response(sock, "ERROR", "Invalid command.");
@@ -322,8 +336,8 @@ void execute_command(const std::string &command, int sock) {
  * @param sock The client's socket file descriptor.
  */
 void handle_client(int sock) {
-    const char *welcome_msg = "\033[32mConnected to MyFTPServer!\033[0m \n";
-    send(sock, welcome_msg, strlen(welcome_msg), 0);
+    const char *welcome_msg = "\033[32mConnected to MyFTPServer!\033[0m";
+    send_response(sock, welcome_msg);
 
     char buffer[BUFFER_SIZE];
     while (true) {
@@ -341,7 +355,6 @@ void handle_client(int sock) {
 
         if (command == "quit") {
             std::cout << "\033[31mClient Disconnected.\033[0m\n";
-            send(sock, "\033[31mBye!\033[0m\n", 9, 0);
             break;
         } 
 
