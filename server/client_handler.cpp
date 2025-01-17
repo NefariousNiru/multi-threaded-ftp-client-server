@@ -80,17 +80,29 @@ void handle_put(int sock, const std::string &filename) {
     send_response(sock, "SUCCESS", "READY_TO_RECEIVE");
 
     char buffer[BUFFER_SIZE];
-    ssize_t bytes_received;
-    while ((bytes_received = recv(sock, buffer, sizeof(buffer), 0)) > 0) {
-        if (std::string(buffer, bytes_received).find("FILE_TRANSFER_END\n") != std::string::npos) {
+    std::string leftover_data;
+    while (true) {
+        ssize_t bytes_received = recv(sock, buffer, BUFFER_SIZE, 0);
+        if (bytes_received <= 0) {
             break;
         }
-        file.write(buffer, bytes_received);
+
+        leftover_data.append(buffer, bytes_received);
+
+        // Check the termination marker 
+        size_t end_position = leftover_data.find("FILE_TRANSFER_END\n");
+        if (end_position != std::string::npos) {
+            file.write(leftover_data.c_str(), end_position);
+            break;
+        }
+
+        file.write(leftover_data.c_str(), leftover_data.size());
+        leftover_data.clear();
     }
 
     file.close();
 
-    if (bytes_received < 0) {
+    if (leftover_data.empty()) {
         send_response(sock, "ERROR", "File transfer failed.");
     } else {
         send_response(sock, "SUCCESS", "File transfer completed.");
@@ -352,6 +364,9 @@ void handle_client(int sock) {
 
         std::string command(buffer);
         command = trim(command); 
+        if (command.empty()) {
+            send_response(sock, "");
+        }
 
         if (command == "quit") {
             std::cout << "\033[31mClient Disconnected.\033[0m\n";
