@@ -19,31 +19,55 @@
 
 #define BUFFER_SIZE 1024
 
+
+/**
+ * @brief Checks if a file or directory exists.
+ * 
+ * @param path The path to the file or directory.
+ * @return true if the file or directory exists, false otherwise.
+ */
 bool file_exists(const std::string &path) {
     struct stat buffer;
     return (stat(path.c_str(), &buffer) == 0);
 }
 
+
+/**
+ * @brief Creates a new directory with 0755 permissions.
+ * 
+ * @param path The path of the directory to create.
+ * @return true if the directory was successfully created, false otherwise.
+ */
 bool create_directory(const std::string &path) {
     return (mkdir(path.c_str(), 0755) == 0);
 }
 
+
+/**
+ * @brief Removes a file from the filesystem.
+ * 
+ * @param path The path to the file to remove.
+ * @return true if the file was successfully removed, false otherwise.
+ */
 bool remove_file(const std::string &path) {
     return (remove(path.c_str()) == 0);
 }
 
-std::vector<std::string> list_directory(const std::string &path) {
-    std::vector<std::string> files;
-    DIR *dir = opendir(path.c_str());
-    if (!dir) return files;
 
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != nullptr) {
-        files.push_back(entry->d_name);
+/**
+ * @brief Sends a standardized response to the client.
+ * 
+ * Formats the response as "<status>: <message>\n" or "<message>\n" and sends it to the client.
+ * Logs an error if the `send` call fails.
+ * 
+ * @param sock The client's socket file descriptor.
+ * @param response The formatted response string to send.
+ */
+void send_response_impl(int sock, const std::string &response) {
+    ssize_t bytes_sent = send(sock, response.c_str(), response.size(), 0);
+    if (bytes_sent == -1) {
+        std::cerr << "Error sending response: " << strerror(errno) << std::endl;
     }
-
-    closedir(dir);
-    return files;
 }
 
 
@@ -59,7 +83,7 @@ std::vector<std::string> list_directory(const std::string &path) {
  */ 
 void send_response(int sock, const std::string &status, const std::string &message) {
     std::string response = status + ": " + message + "\n";
-    send(sock, response.c_str(), response.size(), 0);
+    send_response_impl(sock, response);
 }
 
 
@@ -74,7 +98,7 @@ void send_response(int sock, const std::string &status, const std::string &messa
  */ 
 void send_response(int sock, const std::string &message) {
     std::string response = message + "\n";
-    send(sock, response.c_str(), response.size(), 0);
+    send_response_impl(sock, response);
 }
 
 
@@ -194,14 +218,20 @@ void handle_mkdir(int sock, const std::string &directory_name) {
         return;
     }
 
-    if (file_exists(directory_name)) {
-        send_response(sock, "ERROR", "Directory already exists.");
+    struct stat path_stat;
+    if (stat(directory_name.c_str(), &path_stat) == 0) {
+        if (S_ISDIR(path_stat.st_mode)) {
+            send_response(sock, "ERROR", "Directory already exists.");
+        } else {
+            send_response(sock, "ERROR", "A file with the same name exists.");
+        }
         return;
     }
 
     if (create_directory(directory_name)) {
         send_response(sock, "SUCCESS", "Directory created successfully.");
     } else {
+        std::cerr << "Error creating directory: " << strerror(errno) << std::endl;
         send_response(sock, "ERROR", "Unable to create directory.");
     }
 }
@@ -219,14 +249,21 @@ void handle_delete(int sock, const std::string &filename) {
         return;
     }
 
+    struct stat file_stat;
+    if (stat(filename.c_str(), &file_stat) == 0 && S_ISDIR(file_stat.st_mode)) {
+        send_response(sock, "ERROR", "Specified path is a directory, not a file.");
+        return;
+    }
+
     if (!file_exists(filename)) {
         send_response(sock, "ERROR", "404 - File not found.");
         return;
     }
 
     if (remove_file(filename)) {
-        send_response(sock, "SUCCESS", "File deleted successfully.");
+        send_response(sock, "SUCCESS", "File deleted.");
     } else {
+        std::cerr << "Error deleting file " << strerror(errno) << std::endl;
         send_response(sock, "ERROR", "Unable to delete file.");
     }
 }
@@ -244,14 +281,21 @@ void handle_cd(int sock, const std::string &directory) {
         return;
     }
 
-    if (!file_exists(directory)) {
+    struct stat dir_stat;
+    if (stat(directory.c_str(), &dir_stat) != 0) {
         send_response(sock, "ERROR", "Directory not found.");
         return;
     }
 
+    if (!S_ISDIR(dir_stat.st_mode)) {
+        send_response(sock, "ERROR", "Specified path is not a directory.");
+        return;
+    }
+
     if (chdir(directory.c_str()) == 0) {
-        send_response(sock, "SUCCESS", "Directory changed.");
+        send_response(sock, "Directory changed.");
     } else {
+        std::cerr << "Error changing directory: " << strerror(errno) << std::endl;
         send_response(sock, "ERROR", "Unable to change directory.");
     }
 }
@@ -265,6 +309,7 @@ void handle_cd(int sock, const std::string &directory) {
 void handle_ls(int sock) {
     DIR *dir = opendir(".");
     if (dir == nullptr) {
+        std::cerr << "Error opening directory: " << strerror(errno) << std::endl;
         send_response(sock, "ERROR", "Unable to open directory.");
         return;
     }
@@ -272,16 +317,21 @@ void handle_ls(int sock) {
     struct dirent *entry;
     std::string file_list;
     while ((entry = readdir(dir)) != nullptr) {
-        file_list += entry -> d_name;
-        file_list += "\n";
+        std::string name(entry->d_name);
+        if (name != "." && name != ".."){
+            file_list += entry -> d_name;
+            file_list += "\n";
+        }
     }
 
     closedir(dir);
-    if (!file_list.empty()) {
-        send_response(sock, file_list);
-    } else {
-        send_response(sock, "SUCCESS", "Directory is empty.");
+
+    if (file_list.empty()) {
+        send_response(sock, "Directory is empty.");
+        return;
     }
+
+    send_response(sock, file_list);
 }
 
 
@@ -295,6 +345,7 @@ void handle_pwd(int sock) {
     if (getcwd(cwd, sizeof(cwd)) != nullptr) {
         send_response(sock, std::string(cwd));
     } else {
+        std::cerr << "Error retrieving current directory: " << strerror(errno) << std::endl;
         send_response(sock, "ERROR", "Unable to retrieve current directory.");
     }
 }
