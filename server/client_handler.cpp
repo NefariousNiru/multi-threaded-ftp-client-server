@@ -193,11 +193,21 @@ void handle_get(int sock, const std::string &filename) {
     char buffer[BUFFER_SIZE];
     while (file.read(buffer, sizeof(buffer))) {
         // Binary files - Do not use send_response()
-        send(sock, buffer, file.gcount(), 0);
+        ssize_t sent = send(sock, buffer, file.gcount(), 0);
+        if (sent <= 0) {
+            std::cerr << "Error: Failed to send data to client.\n";
+            file.close();
+            return;
+        }
     }
 
     if (file.gcount() > 0) {
-        send(sock, buffer, file.gcount(), 0);
+        ssize_t sent = send(sock, buffer, file.gcount(), 0);
+        if (sent <= 0) {
+            std::cerr << "Error: Failed to send final data to client.\n";
+            file.close();
+            return;
+        }
     }
 
     send_response(sock, "FILE_TRANSFER_END");
