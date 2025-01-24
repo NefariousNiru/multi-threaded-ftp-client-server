@@ -2,7 +2,10 @@
 CXX = g++
 
 # Compiler Flags
-CXXFLAGS = -Wall -Wextra -g -pthread -std=c++11 -Iheaders
+CXXFLAGS = -Wall -Wextra -g -pthread -std=c++11 -Iheaders -I/usr/include/boost
+
+# Linker Flags
+LDFLAGS = -L/usr/lib/x86_64-linux-gnu -lboost_system -lboost_filesystem
 
 # Target Executable
 TARGET = myftpserver
@@ -13,18 +16,18 @@ SRCS = myftpserver.cpp thread_pool.cpp client_handler.cpp
 # Object Files
 OBJS = $(SRCS:.cpp=.o)
 
-# Default Rule: Build the executable
+# Default Rule: Build the executable and clean object files
 all: $(TARGET) clean_objects
 
 # Link object files to create the final executable
 $(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Rule to compile .cpp files to .o
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# Remove only the object files
+# Remove only the object files after building
 clean_objects:
 	rm -f $(OBJS)
 
