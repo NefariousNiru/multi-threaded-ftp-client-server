@@ -2,7 +2,7 @@
 CXX = g++
 
 # Compiler Flags
-CXXFLAGS = -Wall -Wextra -g -pthread -std=c++20 -Iheaders
+CXXFLAGS = -Wall -Wextra -g -pthread -std=c++11 -Iheaders
 
 # Target Executable
 TARGET = myftpserver
