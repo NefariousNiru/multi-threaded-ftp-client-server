@@ -5,16 +5,46 @@
 #include <dirent.h>
 #include <sys/socket.h>
 #include <sys/stat.h> 
+#include <sys/types.h>
 #include <fstream>
 #include <unordered_map>
 #include <functional>
 #include <cerrno>
 #include <cstring>
-#include <boost/filesystem.hpp>
+#include <cstdio>
+#include <dirent.h>
+#include <vector>
+#include <string>
 
 
-namespace fs = boost::filesystem;
 #define BUFFER_SIZE 1024
+
+bool file_exists(const std::string &path) {
+    struct stat buffer;
+    return (stat(path.c_str(), &buffer) == 0);
+}
+
+bool create_directory(const std::string &path) {
+    return (mkdir(path.c_str(), 0755) == 0);
+}
+
+bool remove_file(const std::string &path) {
+    return (remove(path.c_str()) == 0);
+}
+
+std::vector<std::string> list_directory(const std::string &path) {
+    std::vector<std::string> files;
+    DIR *dir = opendir(path.c_str());
+    if (!dir) return files;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        files.push_back(entry->d_name);
+    }
+
+    closedir(dir);
+    return files;
+}
 
 
 /**
@@ -123,22 +153,14 @@ void handle_get(int sock, const std::string &filename) {
         return;
     }
 
+    if (!file_exists(filename)) {
+        send_response(sock, "ERROR", "404 - File not found.");
+        return;
+    }
+
     std::ifstream file(filename, std::ios::binary);
     if (!file.is_open()) {
-        switch (errno) {
-            case ENOENT:
-                send_response(sock, "ERROR", "404 - File not found.");
-                break;
-            case EACCES:
-                send_response(sock, "ERROR", "Permission denied.");
-                break;
-            case EISDIR:
-                send_response(sock, "ERROR", "Path is a directory, not a file.");
-                break;
-            default:
-                send_response(sock, "ERROR", std::string("Unable to open file: ") + std::strerror(errno));
-                break;
-        }
+        send_response(sock, "ERROR", "Unable to open file.");
         return;
     }
 
@@ -172,7 +194,12 @@ void handle_mkdir(int sock, const std::string &directory_name) {
         return;
     }
 
-    if (mkdir(directory_name.c_str(), 0755) == 0) {
+    if (file_exists(directory_name)) {
+        send_response(sock, "ERROR", "Directory already exists.");
+        return;
+    }
+
+    if (create_directory(directory_name)) {
         send_response(sock, "SUCCESS", "Directory created successfully.");
     } else {
         send_response(sock, "ERROR", "Unable to create directory.");
@@ -192,26 +219,15 @@ void handle_delete(int sock, const std::string &filename) {
         return;
     }
 
-    if (remove(filename.c_str()) == 0) {
+    if (!file_exists(filename)) {
+        send_response(sock, "ERROR", "404 - File not found.");
+        return;
+    }
+
+    if (remove_file(filename)) {
         send_response(sock, "SUCCESS", "File deleted successfully.");
     } else {
-        switch (errno) {
-            case ENOENT:
-                send_response(sock, "ERROR", "404 - File not found.");
-                break;
-            case EACCES:
-                send_response(sock, "ERROR", "Permission denied.");
-                break;
-            case EPERM:
-                send_response(sock, "ERROR", "Operation not permitted.");
-                break;
-            case EISDIR:
-                send_response(sock, "ERROR", "Cannot delete a directory using this command.");
-                break;
-            default:
-                send_response(sock, "ERROR", std::strerror(errno));
-                break;
-        }
+        send_response(sock, "ERROR", "Unable to delete file.");
     }
 }
 
@@ -225,6 +241,11 @@ void handle_delete(int sock, const std::string &filename) {
 void handle_cd(int sock, const std::string &directory) {
     if (directory.empty()) {
         send_response(sock, "ERROR", "Directory not specified.");
+        return;
+    }
+
+    if (!file_exists(directory)) {
+        send_response(sock, "ERROR", "Directory not found.");
         return;
     }
 
