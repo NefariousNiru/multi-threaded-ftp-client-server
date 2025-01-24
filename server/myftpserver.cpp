@@ -146,6 +146,16 @@ void accept_incoming_connections(int server_sock) {
 }
 
 
+/**
+ * @brief Retrieves the port number from the command-line arguments. If no port is specified, it defaults to 8080
+ * 
+ * @param argc The number of command-line arguments.
+ * @param argv The array of command-line arguments.
+ * @return The port number to use (default is 8080 if not specified).
+ * 
+ * @note This function assumes the port number is provided as the second argument
+ *       (i.e., `argv[1]`).
+ */
 int get_port(int argc, char *argv[]) {
     int port;
     if (argc != 2) {
@@ -156,6 +166,7 @@ int get_port(int argc, char *argv[]) {
     }
     return port;
 }
+
 
 /**
  * @brief The main entry point of the server application.

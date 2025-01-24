@@ -2,10 +2,7 @@
 CXX = g++
 
 # Compiler Flags
-CXXFLAGS = -Wall -Wextra -g -pthread -std=c++11 -Iheaders -I/usr/include/boost
-
-# Linker Flags
-LDFLAGS = -L/usr/lib/x86_64-linux-gnu -lboost_system -lboost_filesystem
+CXXFLAGS = -Wall -Wextra -g -pthread -std=c++11 -Iheaders
 
 # Target Executable
 TARGET = myftpserver
@@ -21,7 +18,7 @@ all: $(TARGET) clean_objects
 
 # Link object files to create the final executable
 $(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
 
 # Rule to compile .cpp files to .o
 %.o: %.cpp
