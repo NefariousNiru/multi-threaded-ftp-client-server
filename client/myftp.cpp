@@ -240,7 +240,7 @@ void client_loop(int sock) {
  * @throws std::runtime_error If unable to resolve the hostname or connect to the server.
  */
 void connect_to_server(const std::string &hostname, int port, int &sock) {
-    struct addrinfo hints{}, *res, *p;
+    struct addrinfo hints, *res, *p;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
