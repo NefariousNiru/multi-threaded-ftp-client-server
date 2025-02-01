@@ -7,11 +7,75 @@
 #include <arpa/inet.h>
 #include "thread_pool.h"
 #include "client_handler.h"
+#include <unordered_map>
 
 
 #define THREAD_POOL_SIZE (std::thread::hardware_concurrency() > 0 ? std::thread::hardware_concurrency() : 4)
 #define BACKLOG_QUEUE_SIZE 64
 #define BUFFER_SIZE 1024
+
+
+std::unordered_map<int, bool> active_commands; // Command ID -> Running status
+std::mutex command_mutex;
+
+
+/**
+ * @brief Handles incoming terminate requests.
+ * 
+ * @param tport The terminate port number.
+ */
+void handle_terminate_requests(int tport) {
+    int term_sock = socket(AF_INET6, SOCK_STREAM, 0);
+    if (term_sock == -1) {
+        std::cerr << "Failed to create terminate socket." << std::endl;
+        return;
+    }
+
+    sockaddr_in6 term_addr{};
+    term_addr.sin6_family = AF_INET6;
+    term_addr.sin6_addr = in6addr_any;
+    term_addr.sin6_port = htons(tport);
+
+    if (bind(term_sock, (struct sockaddr *)&term_addr, sizeof(term_addr)) < 0) {
+        std::cerr << "Binding terminate socket failed." << std::endl;
+        close(term_sock);
+        return;
+    }
+
+    if (listen(term_sock, BACKLOG_QUEUE_SIZE) < 0) {
+        std::cerr << "Listen on terminate socket failed." << std::endl;
+        close(term_sock);
+        return;
+    }
+
+    std::cout << "Listening for termination requests @ PORT: \e[0;34m" << tport << "\e[0;0m\n";
+
+    while (true) {
+        sockaddr_in6 client_addr;
+        socklen_t client_len = sizeof(client_addr);
+        int client_sock = accept(term_sock, (sockaddr *)&client_addr, &client_len);
+
+        if (client_sock < 0) {
+            std::cerr << "Failed to accept terminate request." << std::endl;
+            continue;
+        }
+
+        char buffer[BUFFER_SIZE];
+        ssize_t bytes_received = recv(client_sock, buffer, BUFFER_SIZE, 0);
+        if (bytes_received > 0) {
+            buffer[bytes_received] = '\0';
+            int command_id = std::stoi(buffer + 10); // Extract command ID
+            std::lock_guard<std::mutex> lock(command_mutex);
+            if (active_commands.count(command_id)) {
+                active_commands[command_id] = false; // Mark command for termination
+                std::cout << "Terminating command ID " << command_id << std::endl;
+                active_commands.erase(command_id);
+            }
+        }
+        close(client_sock);
+    }
+}
+
 
 
 /**
@@ -23,7 +87,7 @@ int create_socket() {
     int sock = socket(AF_INET6, SOCK_STREAM, 0);
     if (sock == - 1) {
         std::cerr << "Failed to create socket. Exiting! \n";
-        return 1;
+        return -1;
     }
     std::cout << "Socket created successfully. \n";
     return sock;
@@ -41,7 +105,6 @@ bool set_dual_stack(int sock) {
     int opt = 0;
     if(setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt)) <  0) {
         std::cerr << "Failed to set dual-stack mode. \n";
-        close(sock);
         return false;
     }
     std::cout << "Socket set to dual-stack mode - (IPv4 & IPv6). \n";
@@ -118,15 +181,16 @@ std::string get_client_ip(const sockaddr_in6 &client_addr) {
 
 
 /**
- * @brief Accepts and processes incoming client connections using a mutli-threaded pool.
+ * @brief Accepts and processes incoming client connections.
  * 
  * @param server_sock The server's socket file descriptor.
  */
-void accept_incoming_connections(int server_sock) {
-    
+void accept_incoming_connections(int server_sock, int tport) {
     ThreadPool pool(THREAD_POOL_SIZE);
+    std::thread terminate_thread(handle_terminate_requests, tport);
+    terminate_thread.detach();
 
-    while (true) {     // Accept multiple client connections in a loop
+    while (true) {
         sockaddr_in6 client_addr;
         socklen_t client_len = sizeof(client_addr);
         int client_sock = accept(server_sock, (sockaddr*)&client_addr, &client_len);
@@ -139,32 +203,10 @@ void accept_incoming_connections(int server_sock) {
         std::string client_ip = get_client_ip(client_addr);
         std::cout << "\033[32mClient connected from IP: " << client_ip << "\033[0m\n";
 
-        pool.enqueue([client_sock, client_addr]() {
+        pool.enqueue([client_sock]() {
             handle_client(client_sock);
         });
     }
-}
-
-
-/**
- * @brief Retrieves the port number from the command-line arguments. If no port is specified, it defaults to 8080
- * 
- * @param argc The number of command-line arguments.
- * @param argv The array of command-line arguments.
- * @return The port number to use (default is 8080 if not specified).
- * 
- * @note This function assumes the port number is provided as the second argument
- *       (i.e., `argv[1]`).
- */
-int get_port(int argc, char *argv[]) {
-    int port;
-    if (argc != 2) {
-        std::cout << "PORT not specified. Using default PORT 8080\n";
-        port = 8080;
-    } else {
-        port = std::stoi(argv[1]);
-    }
-    return port;
 }
 
 
@@ -174,36 +216,35 @@ int get_port(int argc, char *argv[]) {
  * @return int Exit code (0 for success, 1 for failure).
  */
 int main(int argc, char *argv[]) {
-    // Get port argument
-    int port = get_port(argc, argv);
+    if (argc != 3) {
+        std::cerr << "Usage: " << argv[0] << " <nport> <tport>" << std::endl;
+        return 1;
+    }
 
-    // Create a dual-stack socket - Accept both IPv6 and IPv4
+    int nport = std::stoi(argv[1]);
+    int tport = std::stoi(argv[2]);
+
     int server_sock = create_socket();
     if (server_sock == -1) return 1;
 
-    //  Set dual-stack mode
     if (!set_dual_stack(server_sock)) {
         close(server_sock);
         return 1;
     }
-    
-    // Bind the socket
+
     sockaddr_in6 server_addr;
-    if (!bind_socket(server_sock, server_addr, port)) {
+    if (!bind_socket(server_sock, server_addr, nport)) {
         close(server_sock);
         return 1;
     }
 
-    //  Lsiten for connections
-    if (!start_listening(server_sock, port)) {
+    if (!start_listening(server_sock, nport)) {
         close(server_sock);
         return 1;
     }
 
-    // Accept incoming connections for the server_socket
-    accept_incoming_connections(server_sock);
+    accept_incoming_connections(server_sock, tport);
 
-    // Clean up and close sockets
     close(server_sock);
     std::cout << "Server shut down.\n";
     return 0;

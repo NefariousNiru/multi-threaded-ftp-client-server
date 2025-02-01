@@ -6,6 +6,7 @@
 #include <cstring>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <thread>
 
 
 #define BUFFER_SIZE 1024
@@ -52,6 +53,19 @@ void send_command(int sock, const std::string &command) {
 
 
 /**
+ * @brief Sends a terminate request to the server.
+ * 
+ * @param terminate_sock The termination socket file descriptor.
+ * @param command_id The ID of the command to terminate.
+ */
+void send_terminate_request(int terminate_sock, int command_id) {
+    std::string terminate_command = "terminate " + std::to_string(command_id) + "\n";
+    send(terminate_sock, terminate_command.c_str(), terminate_command.size(), 0);
+    std::cout << "Sent termination request for Command-ID: " << command_id << std::endl;
+}
+
+
+/**
  * @brief Handles the "get" command to download a file from the server.
  * 
  * This function sends a "get <filename>" command to the server, initiates a file transfer,
@@ -85,7 +99,7 @@ void send_command(int sock, const std::string &command) {
 void handle_get(int sock, const std::string &filename) {
     send_command(sock, "get " + filename);
     std::string response = receive_response(sock);
-
+    std::cout << response;
     if (response.find("SUCCESS: FILE_TRANSFER_START") == 0) {
         std::ofstream file(filename, std::ios::binary);
         if (!file.is_open()) {
@@ -192,7 +206,7 @@ void handle_put(int sock, const std::string &filename) {
  * 
  * @param sock The socket file descriptor for communication with the server.
  */
-void client_loop(int sock) {
+void client_loop(int sock, int terminate_sock) {
     std::string command;
     std::string response = receive_response(sock);
     std::cout << response;
@@ -212,13 +226,18 @@ void client_loop(int sock) {
 
         if (command.substr(0, 4) == "put ") {
             std::string filename = command.substr(4);
-            // TODO handle put
-            handle_put(sock, filename);
+            std::thread put_thread(handle_put, sock, filename);
+            put_thread.detach();
 
         } else if (command.substr(0, 4) == "get ") {
             std::string filename = command.substr(4);
-            // TODO Handle get
-            handle_get(sock, filename);
+            std::thread get_thread(handle_get, sock, filename);
+            get_thread.detach();
+
+        } else if (command.substr(0, 9) == "terminate") {
+            int command_id = std::stoi(command.substr(10));
+            send_terminate_request(terminate_sock, command_id); 
+
         } else {
             send_command(sock, command);
             std::string response = receive_response(sock);
@@ -226,6 +245,7 @@ void client_loop(int sock) {
         }
     }
 }
+
 
 
 /**
@@ -287,19 +307,24 @@ void connect_to_server(const std::string &hostname, int port, int &sock) {
  * @return 0 on successful execution, 1 on failure.
  */
 int main(int argc, char *argv[]) {
-    if (argc != 3) {
-        std::cerr << "Usage: " << argv[0] << "<server_ip> <port> \n";
+    if (argc != 4) {
+        std::cerr << "Usage: " << argv[0] << "<server_ip> <nport> <tport> \n";
         return 1;
     }
 
     std::string hostname = argv[1];
-    int port = std::stoi(argv[2]);
+    int nport = std::stoi(argv[2]);
+    int tport = std::stoi(argv[3]);
 
-    int sock;
+    int sock, terminate_sock;
     try {
-        connect_to_server(hostname, port, sock);
-        client_loop(sock);
+        connect_to_server(hostname, nport, sock);
+        connect_to_server(hostname, tport, terminate_sock);
+
+        client_loop(sock, terminate_sock);
+
         close(sock);
+        close(terminate_sock);
     } catch (const std::exception &e) {
         std::cerr << "Error: " << e.what() << "\n";
         return 1;

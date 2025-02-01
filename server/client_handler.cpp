@@ -15,9 +15,14 @@
 #include <dirent.h>
 #include <vector>
 #include <string>
+#include <atomic>
+#include <mutex>
 
 
 #define BUFFER_SIZE 1024
+std::atomic<int> next_command_id{1};  // Global command ID counter
+extern std::unordered_map<int, bool> active_commands;
+extern std::mutex command_mutex;
 
 
 /**
@@ -132,7 +137,13 @@ void handle_put(int sock, const std::string &filename) {
         return;
     }
 
-    send_response(sock, "SUCCESS", "READY_TO_RECEIVE");
+    int command_ID = next_command_id++;
+    {
+        std::lock_guard<std::mutex> lock(command_mutex);
+        active_commands[command_ID] = true;
+    }
+
+    send_response(sock, "SUCCESS", "READY_TO_RECEIVE Command-ID: "+ std::to_string(command_ID));
 
     char buffer[BUFFER_SIZE];
     std::string leftover_data;
@@ -140,6 +151,17 @@ void handle_put(int sock, const std::string &filename) {
         ssize_t bytes_received = recv(sock, buffer, BUFFER_SIZE, 0);
         if (bytes_received <= 0) {
             break;
+        }
+        
+        {
+            std::lock_guard<std::mutex> lock(command_mutex);
+            if (!active_commands[command_ID]) {
+                std::cerr << "Transfer aborted for Command-ID: " << command_ID << std::endl;
+                file.close();
+                remove_file(filename); // Delete the incomplete file
+                send_response(sock, "ERROR", "Transfer aborted.");
+                return;
+            }
         }
 
         leftover_data.append(buffer, bytes_received);
@@ -156,6 +178,11 @@ void handle_put(int sock, const std::string &filename) {
     }
 
     file.close();
+
+    {
+        std::lock_guard<std::mutex> lock(command_mutex);
+        active_commands.erase(command_ID);  // Remove from active commands
+    }
 
     if (leftover_data.empty()) {
         send_response(sock, "ERROR", "File transfer failed.");
@@ -188,10 +215,26 @@ void handle_get(int sock, const std::string &filename) {
         return;
     }
 
-    send_response(sock, "SUCCESS", "FILE_TRANSFER_START");
+    int command_ID = next_command_id++;
+    {
+        std::lock_guard<std::mutex> lock(command_mutex);
+        active_commands[command_ID] = true;
+    }
+
+    send_response(sock, "SUCCESS", "FILE_TRANSFER_START Command-ID: " + std::to_string(command_ID));
 
     char buffer[BUFFER_SIZE];
     while (file.read(buffer, sizeof(buffer))) {
+        {
+            std::lock_guard<std::mutex> lock(command_mutex);
+            if (!active_commands[command_ID]) {
+                std::cerr << "Transfer aborted for Command-ID: " << command_ID << std::endl;
+                file.close();
+                send_response(sock, "ERROR", "Transfer aborted.");
+                return;
+            }
+        }
+
         // Binary files - Do not use send_response()
         ssize_t sent = send(sock, buffer, file.gcount(), 0);
         if (sent <= 0) {
@@ -213,6 +256,11 @@ void handle_get(int sock, const std::string &filename) {
     send_response(sock, "FILE_TRANSFER_END");
 
     file.close();
+
+    {
+        std::lock_guard<std::mutex> lock(command_mutex);
+        active_commands.erase(command_ID);
+    }
 }
 
 
