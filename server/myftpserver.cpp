@@ -20,36 +20,11 @@ std::mutex command_mutex;
 
 
 /**
- * @brief Handles incoming terminate requests.
+ * @brief Handles termination requests.
  * 
- * @param tport The terminate port number.
+ * @param term_sock The termination socket.
  */
-void handle_terminate_requests(int tport) {
-    int term_sock = socket(AF_INET6, SOCK_STREAM, 0);
-    if (term_sock == -1) {
-        std::cerr << "Failed to create terminate socket." << std::endl;
-        return;
-    }
-
-    sockaddr_in6 term_addr{};
-    term_addr.sin6_family = AF_INET6;
-    term_addr.sin6_addr = in6addr_any;
-    term_addr.sin6_port = htons(tport);
-
-    if (bind(term_sock, (struct sockaddr *)&term_addr, sizeof(term_addr)) < 0) {
-        std::cerr << "Binding terminate socket failed." << std::endl;
-        close(term_sock);
-        return;
-    }
-
-    if (listen(term_sock, BACKLOG_QUEUE_SIZE) < 0) {
-        std::cerr << "Listen on terminate socket failed." << std::endl;
-        close(term_sock);
-        return;
-    }
-
-    std::cout << "Listening for termination requests @ PORT: \e[0;34m" << tport << "\e[0;0m\n";
-
+void handle_termination_requests(int term_sock) {
     while (true) {
         sockaddr_in6 client_addr;
         socklen_t client_len = sizeof(client_addr);
@@ -74,6 +49,41 @@ void handle_terminate_requests(int tport) {
         }
         close(client_sock);
     }
+}
+
+
+/**
+ * @brief Binds terminate port.
+ * 
+ * @param tport The terminate port number.
+ */
+bool bind_terminate_port(int tport, int &term_sock) {
+    term_sock = socket(AF_INET6, SOCK_STREAM, 0);
+    if (term_sock == -1) {
+        std::cerr << "Failed to create terminate socket." << std::endl;
+        return false;
+    }
+
+    sockaddr_in6 term_addr{};
+    term_addr.sin6_family = AF_INET6;
+    term_addr.sin6_addr = in6addr_any;
+    term_addr.sin6_port = htons(tport);
+
+    if (bind(term_sock, (struct sockaddr *)&term_addr, sizeof(term_addr)) < 0) {
+        std::cerr << "Binding terminate socket failed." << std::endl;
+        close(term_sock);
+        return false;
+    }
+
+    if (listen(term_sock, BACKLOG_QUEUE_SIZE) < 0) {
+        std::cerr << "Listen on terminate socket failed." << std::endl;
+        close(term_sock);
+        return false;
+    }
+
+    std::cout << "Listening for termination requests @ PORT: \e[0;34m" << tport << "\e[0;0m\n";
+
+    return true;
 }
 
 
@@ -181,15 +191,22 @@ std::string get_client_ip(const sockaddr_in6 &client_addr) {
 
 
 /**
- * @brief Accepts and processes incoming client connections.
+ * @brief Accepts and processes incoming client connections. Also spwas two threads for 
+ * nport and tport and exists if tport doesnt connect
  * 
  * @param server_sock The server's socket file descriptor.
  */
-void accept_incoming_connections(int server_sock, int tport) {
-    ThreadPool pool(THREAD_POOL_SIZE);
-    std::thread terminate_thread(handle_terminate_requests, tport);
-    terminate_thread.detach();
+bool accept_incoming_connections(int server_sock, int tport) {
+    int term_sock;
 
+    if (!bind_terminate_port(tport, term_sock)) {
+        return false; // if we can't bind tport => fail
+    }
+    
+    std::thread t(handle_termination_requests, term_sock);
+    t.detach();
+
+    ThreadPool pool(THREAD_POOL_SIZE);
     while (true) {
         sockaddr_in6 client_addr;
         socklen_t client_len = sizeof(client_addr);
@@ -207,6 +224,8 @@ void accept_incoming_connections(int server_sock, int tport) {
             handle_client(client_sock);
         });
     }
+
+    return true;
 }
 
 
@@ -243,7 +262,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    accept_incoming_connections(server_sock, tport);
+    if (!accept_incoming_connections(server_sock, tport)) {
+        std::cerr << "ERROR: tport binding failed. Shutting down.\n";
+        close(server_sock);
+        return 1;
+    }
 
     close(server_sock);
     std::cout << "Server shut down.\n";
