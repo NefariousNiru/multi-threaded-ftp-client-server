@@ -7,6 +7,33 @@
 
 
 /**
+ * @brief Receives and saves a file sent over a socket.
+ *
+ * This function handles incoming file transfer from a client. It writes the received
+ * data to the specified file and checks for a termination marker ("FILE_TRANSFER_END\n").
+ * If the transfer is aborted, it deletes the incomplete file and informs the client.
+ *
+ * @param sock The socket descriptor for receiving data.
+ * @param command_ID The unique ID associated with this file transfer command.
+ * @param filename The name of the file where the received data should be stored.
+ */
+void receive_data_put(int data_client_sock, int command_ID, const std::string &filename);
+
+
+/**
+ * @brief Creates a data socket bound to an ephemeral port.
+ *
+ * This function creates an IPv6 TCP socket, binds it to an ephemeral port (chosen by the OS),
+ * and prepares it for listening. It retrieves the assigned port number and returns it.
+ *
+ * @param data_sock_out Reference to an integer where the created socket descriptor will be stored.
+ * @param ephemeral_port_out Reference to an integer where the assigned ephemeral port will be stored.
+ * @return `true` if the socket was successfully created and bound, `false` otherwise.
+ */
+bool create_data_socket(int &data_sock_out, int &ephemeral_port_out);
+
+
+/**
  * @brief Handles a single client connection.
  * 
  * @param sock The client's socket file descriptor.

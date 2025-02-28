@@ -35,6 +35,16 @@ void send_command(int sock, const std::string &command);
 
 
 /**
+ * @brief Parses server response for termination to extract command id and data port
+ * 
+ * Response looks like "SUCCESS: DATA_PORT <port> Command-ID: <id>" or "ERROR"
+ * 
+ * @param response Servers response as string
+ */ 
+std::pair<int, int> parse_command_id_data_port(std::string &response);
+
+
+/**
  * @brief Sends a terminate request to the server.
  * 
  * @param terminate_sock The termination socket file descriptor.

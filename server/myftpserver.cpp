@@ -25,30 +25,32 @@ std::mutex command_mutex;
  * @param term_sock The termination socket.
  */
 void handle_termination_requests(int term_sock) {
+    sockaddr_in6 client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int client_sock = accept(term_sock, (sockaddr *)&client_addr, &client_len);
+
+    if (client_sock < 0) {
+        std::cerr << "Failed to accept terminate request." << std::endl;
+        return;
+    }
+
     while (true) {
-        sockaddr_in6 client_addr;
-        socklen_t client_len = sizeof(client_addr);
-        int client_sock = accept(term_sock, (sockaddr *)&client_addr, &client_len);
-
-        if (client_sock < 0) {
-            std::cerr << "Failed to accept terminate request." << std::endl;
-            continue;
-        }
-
         char buffer[BUFFER_SIZE];
         ssize_t bytes_received = recv(client_sock, buffer, BUFFER_SIZE, 0);
+
         if (bytes_received > 0) {
             buffer[bytes_received] = '\0';
-            int command_id = std::stoi(buffer + 10); // Extract command ID
+            int command_id = std::stoi(buffer + 10);
             std::lock_guard<std::mutex> lock(command_mutex);
             if (active_commands.count(command_id)) {
                 active_commands[command_id] = false; // Mark command for termination
-                std::cout << "Terminating command ID " << command_id << std::endl;
+                std::cout << "Terminating Command-ID " << command_id << std::endl;
                 active_commands.erase(command_id);
             }
         }
-        close(client_sock);
     }
+    
+    close(client_sock);
 }
 
 

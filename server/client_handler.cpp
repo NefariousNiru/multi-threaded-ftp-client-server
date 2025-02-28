@@ -17,6 +17,9 @@
 #include <string>
 #include <atomic>
 #include <mutex>
+#include <netinet/in.h>
+#include <thread>
+#include <arpa/inet.h>
 
 
 #define BUFFER_SIZE 1024
@@ -24,6 +27,43 @@ std::atomic<int> next_command_id{1};  // Global command ID counter
 extern std::unordered_map<int, bool> active_commands;
 extern std::mutex command_mutex;
 
+
+bool create_data_socket(int &data_sock_out, int &ephemeral_port_out) {
+    data_sock_out = socket(AF_INET6, SOCK_STREAM, 0);
+    if (data_sock_out == -1) {
+        std::cerr << "Could not create data socket.\n";
+        return false;
+    }
+
+    // Bind to an ephemeral port (port 0 => ephemeral)
+    sockaddr_in6 addr{};
+    addr.sin6_family = AF_INET6;
+    addr.sin6_addr   = in6addr_any;
+    addr.sin6_port   = 0; // 0 => ephemeral port (OS decides)
+
+    if (bind(data_sock_out, (sockaddr*)&addr, sizeof(addr)) < 0) {
+        std::cerr << "Failed to bind ephemeral data socket.\n";
+        close(data_sock_out);
+        return false;
+    }
+
+    socklen_t addr_len = sizeof(addr);
+    if (getsockname(data_sock_out, (sockaddr*)&addr, &addr_len) < 0) {
+        std::cerr << "Failed to get ephemeral port.\n";
+        close(data_sock_out);
+        return false;
+    }
+
+    ephemeral_port_out = ntohs(addr.sin6_port);
+
+    if (listen(data_sock_out, 1) < 0) {
+        std::cerr << "Listen on ephemeral data socket failed.\n";
+        close(data_sock_out);
+        return false;
+    }
+
+    return true;
+}
 
 bool file_exists(const std::string &path) {
     struct stat buffer;
@@ -67,25 +107,17 @@ std::string trim(const std::string &str) {
 }
 
 
-void handle_put(int sock, const std::string &filename) {
-    if (filename.empty()) {
-        send_response(sock, "ERROR", "File name not specified.");
-        return;
-    }
-
+void receive_data_put(int sock, int command_ID, const std::string &filename) {
     std::ofstream file(filename, std::ios::binary);
     if (!file.is_open()) {
         send_response(sock, "ERROR", "Unable to create file.");
         return;
     }
 
-    int command_ID = next_command_id++;
     {
         std::lock_guard<std::mutex> lock(command_mutex);
         active_commands[command_ID] = true;
     }
-
-    send_response(sock, "SUCCESS", "READY_TO_RECEIVE Command-ID: "+ std::to_string(command_ID));
 
     char buffer[BUFFER_SIZE];
     std::string leftover_data;
@@ -123,7 +155,7 @@ void handle_put(int sock, const std::string &filename) {
 
     {
         std::lock_guard<std::mutex> lock(command_mutex);
-        active_commands.erase(command_ID);  // Remove from active commands
+        active_commands.erase(command_ID);
     }
 
     if (leftover_data.empty()) {
@@ -131,6 +163,53 @@ void handle_put(int sock, const std::string &filename) {
     } else {
         send_response(sock, "SUCCESS", "File transfer completed.");
     }
+
+    close(sock);
+}
+
+
+void handle_put(int sock, const std::string &filename) {
+    if (filename.empty()) {
+        send_response(sock, "ERROR", "File name not specified.");
+        return;
+    }
+
+    if (file_exists(filename)) {
+        send_response(sock, "ERROR", "File with the same name exists.");
+        return;
+    }
+
+    // Create data socket and ephemeral port
+    int data_sock, ephemeral_port;
+    if (!create_data_socket(data_sock, ephemeral_port)) {
+        send_response(sock, "ERROR", "Failed to setup data channel.");
+        return;
+    }
+
+    // This is the termination command id
+    int command_ID = next_command_id++;
+
+    // Send ephermeral port number + command ID to client
+    std::string msg = "DATA_PORT " + std::to_string(ephemeral_port) + " Command-ID: " + std::to_string(command_ID);
+    send_response(sock, "SUCCESS", msg);
+
+
+    // Use the socket to send data over a new thread
+    std::thread t([=](){
+        sockaddr_in6 data_client_addr;
+        socklen_t len = sizeof(data_client_addr);
+
+        int data_client_sock = accept(data_sock, (sockaddr*)&data_client_addr, &len);
+        close(data_sock); // Once we accept connection we dont need to lsiten anymore so close it
+
+        if (data_client_sock < 0) {
+            std::cerr << "Failed to accept data connection.\n";
+            return;
+        }
+        receive_data_put(data_client_sock, command_ID, filename);
+    });
+
+    t.detach();
 }
 
 
