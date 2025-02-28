@@ -7,9 +7,9 @@
 
 2. **Run the program:**
    ```bash
-   ./myftpserver <PORT>
+   ./myftpserver <nport> <tport>
    ```
-   Replace `<PORT>` with the port number the server will run on.
+   Replace `<nport>` with the port the server will run on and `<tport>` with the port number the terminate thread will run on.
 
 3. **Clean up build artifacts:**
 
