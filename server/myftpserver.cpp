@@ -70,7 +70,8 @@ bool bind_terminate_port(int tport, int &term_sock) {
         return false;
     }
 
-    sockaddr_in6 term_addr{};
+    sockaddr_in6 term_addr;
+    memset(&term_addr, 0, sizeof(term_addr));
     term_addr.sin6_family = AF_INET6;
     term_addr.sin6_addr = in6addr_any;
     term_addr.sin6_port = htons(tport);
