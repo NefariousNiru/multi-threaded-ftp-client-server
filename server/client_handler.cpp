@@ -60,7 +60,7 @@ void send_data_get(int sock, int command_ID, const std::string &filename) {
             if (!active_commands[command_ID]) {
                 std::cerr << "Transfer aborted for Command-ID: " << command_ID << std::endl;
                 file.close();
-                send_response(sock, "ERROR", "Transfer aborted.");
+                close(sock);
                 return;
             }
         }
@@ -122,7 +122,7 @@ void receive_data_put(int sock, int command_ID, const std::string &filename) {
                 std::cerr << "Transfer aborted for Command-ID: " << command_ID << std::endl;
                 file.close();
                 remove_file(filename); // Delete the incomplete file
-                send_response(sock, "ERROR", "Transfer aborted.");
+                close(sock);
                 return;
             }
         }

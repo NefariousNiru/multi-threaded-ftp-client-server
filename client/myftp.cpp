@@ -8,11 +8,18 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <thread>
+#include <sys/stat.h> 
 
 
 #define BUFFER_SIZE 1024
 std::string hostname;
 int tport;
+
+
+bool file_exists(const std::string &path) {
+    struct stat buffer;
+    return (stat(path.c_str(), &buffer) == 0);
+}
 
 
 bool remove_file(const std::string &path) {
@@ -98,6 +105,11 @@ std::pair<int, int> parse_command_id_data_port(std::string &response) {
 
 
 void handle_get(int sock, const std::string &filename, bool sync) {
+    if (file_exists(filename)) {
+        std::cout << "Name Conflict: Cannot fetch file. A file with the same name exists already! Rename to procced! \n";
+        return;
+    }
+
     send_command(sock, "get " + filename);
     std::string response = receive_response(sock);
 
@@ -125,7 +137,10 @@ void handle_get(int sock, const std::string &filename, bool sync) {
         while (true) {
             ssize_t bytes_received = recv(data_sock, buffer, BUFFER_SIZE, 0);
             if (bytes_received <= 0) {
-                break;
+                std::cerr << "Server closed or reset the connection. Transfer aborted.\n";
+                file.close();
+                remove_file(filename);
+                return;
             }
 
             std::string chunk(buffer, bytes_received);
