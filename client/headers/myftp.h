@@ -70,6 +70,7 @@ void send_terminate_request(int terminate_sock, int command_id);
  * 
  * @param sock The socket file descriptor used for communication with the server.
  * @param filename The name of the file to be downloaded from the server.
+ * @param sync The boolean paramter sync. True if operation is syncronous. False if async. 
  * 
  * @note The function creates a local file with the same name as the requested file.
  *       If the file already exists locally, it will be overwritten.
@@ -92,7 +93,7 @@ void send_terminate_request(int terminate_sock, int command_id);
  * handle_get(sock, "example.txt");
  * @endcode
  */
-void handle_get(int sock, const std::string &filename);
+void handle_get(int sock, const std::string &filename, bool sync);
 
 
 /**
@@ -104,6 +105,7 @@ void handle_get(int sock, const std::string &filename);
  * 
  * @param sock The socket file descriptor used for communication with the server.
  * @param filename The name of the file to be uploaded to the server.
+ * @param sync The boolean paramter sync. True if operation is syncronous. False if async. 
  * 
  * @note The function expects the server to respond with "SUCCESS: READY_TO_RECEIVE" 
  *       before transmitting the file. If the file does not exist locally or the server 
@@ -128,7 +130,7 @@ void handle_get(int sock, const std::string &filename);
  * handle_put(sock, "example.txt");
  * @endcode
  */
-void handle_put(int sock, const std::string &filename);
+void handle_put(int sock, const std::string &filename, bool sync);
 
 
 /**

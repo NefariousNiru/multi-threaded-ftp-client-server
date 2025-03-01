@@ -19,6 +19,7 @@ bool remove_file(const std::string &path) {
     return (remove(path.c_str()) == 0);
 }
 
+
 std::string receive_response(int sock) {
     char message_buffer[BUFFER_SIZE];
     ssize_t bytes_received = recv(sock, message_buffer, BUFFER_SIZE - 1, 0);
@@ -96,7 +97,7 @@ std::pair<int, int> parse_command_id_data_port(std::string &response) {
 }
 
 
-void handle_get(int sock, const std::string &filename) {
+void handle_get(int sock, const std::string &filename, bool sync) {
     send_command(sock, "get " + filename);
     std::string response = receive_response(sock);
 
@@ -140,11 +141,16 @@ void handle_get(int sock, const std::string &filename) {
         file.close();
         std::cout << "File received successfully: " << filename << "\n";
     });
-    get_data_thread.detach();
+
+    if (sync) {
+        get_data_thread.join();
+    } else {
+        get_data_thread.detach();
+    }  
 }
 
 
-void handle_put(int sock, const std::string &filename) {
+void handle_put(int sock, const std::string &filename, bool sync) {
     std::ifstream file(filename, std::ios::binary);
     if (!file.is_open()) {
         std::cerr << "Client Error: Unable to open file.\n";
@@ -191,7 +197,12 @@ void handle_put(int sock, const std::string &filename) {
 
             close(data_sock);
     });
-    put_data_thread.detach();
+
+    if (sync) {
+        put_data_thread.join();
+    } else {
+        put_data_thread.detach();
+    }  
 }
 
 
@@ -208,6 +219,13 @@ void client_loop(int sock, int terminate_sock) {
             continue;
         }
 
+        bool background = false;
+        if (!command.empty() && command.back() == '&') {
+            background = true;
+            command.pop_back(); // Remove '&' from command
+            command = command.substr(0, command.find_last_not_of(" ") + 1); // Trim trailing spaces
+        }
+
         if (command.compare("quit") == 0) {
             send_command(sock, "quit");
             break;
@@ -215,22 +233,40 @@ void client_loop(int sock, int terminate_sock) {
 
         if (command.substr(0, 4) == "put ") {
             std::string filename = command.substr(4);
-            std::thread put_thread(handle_put, sock, filename);
-            put_thread.detach();
+            if (background) {
+                std::thread put_thread(handle_put, sock, filename, false);
+                put_thread.detach();
+            } else {
+                handle_put(sock, filename, true);
+            }
+            
 
         } else if (command.substr(0, 4) == "get ") {
             std::string filename = command.substr(4);
-            std::thread get_thread(handle_get, sock, filename);
-            get_thread.detach();
+            if (background) {
+                std::thread get_thread(handle_get, sock, filename, false);
+                get_thread.detach();
+            } else {
+                handle_get(sock, filename, true);
+            }
 
         } else if (command.substr(0, 9) == "terminate") {
             int command_id = std::stoi(command.substr(10));
             send_terminate_request(terminate_sock, command_id); 
 
         } else {
-            send_command(sock, command);
-            std::string response = receive_response(sock);
-            std::cout << response;
+            if (background) {
+                std::thread cmd_thread([sock, command]() {
+                    send_command(sock, command);
+                    std::string response = receive_response(sock);
+                    std::cout << response;
+                });
+                cmd_thread.detach();
+            } else {
+                send_command(sock, command);
+                std::string response = receive_response(sock);
+                std::cout << response;
+            }
         }
     }
 }
