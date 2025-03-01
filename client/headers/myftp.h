@@ -4,6 +4,14 @@
 #include <thread>
 #include <string>
 
+/**
+ * @brief Removes a file from the filesystem.
+ * 
+ * @param path The path to the file to remove.
+ * @return true if the file was successfully removed, false otherwise.
+ */
+bool remove_file(const std::string &path);
+
 
 /**
  * @brief Receives a response message from a socket.

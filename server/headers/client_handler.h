@@ -64,8 +64,9 @@ void handle_client(int sock);
  * 
  * @param command The command string received from the client.
  * @param sock The client's socket file descriptor.
+ * @param session The client;s connection session struct
  */
-void execute_command(const std::string &command, int sock);
+void execute_command(const std::string &command, int sock, ClientSession &session);
 
 
 using CommandFunction = std::function<void(int, const std::string&, ClientSession &)>;
@@ -98,7 +99,7 @@ CommandMap create_command_map();
  * 
  * @param sock The client's socket file descriptor.
  */
-void handle_pwd(int sock);
+void handle_pwd(int sock, ClientSession &session);
 
 
 /**
@@ -106,7 +107,7 @@ void handle_pwd(int sock);
  * 
  * @param sock The client's socket file descriptor.
  */
-void handle_ls(int sock);
+void handle_ls(int sock, ClientSession &session);
 
 
 /**
@@ -115,7 +116,7 @@ void handle_ls(int sock);
  * @param sock The client's socket file descriptor.
  * @param directory The target directory to change to.
  */
-void handle_cd(int sock, const std::string &directory);
+void handle_cd(int sock, const std::string &directory, ClientSession &session);
 
 
 /**
@@ -124,7 +125,7 @@ void handle_cd(int sock, const std::string &directory);
  * @param sock The client's socket file descriptor.
  * @param filename The name of the file to delete.
  */
-void handle_delete(int sock, const std::string &filename);
+void handle_delete(int sock, const std::string &filename, ClientSession &session);
 
 
 /**
@@ -133,7 +134,7 @@ void handle_delete(int sock, const std::string &filename);
  * @param sock The client's socket file descriptor.
  * @param directory_name The name of the new directory to create.
  */
-void handle_mkdir(int sock, const std::string &directory_name);
+void handle_mkdir(int sock, const std::string &directory_name, ClientSession &session);
 
 
 /**
@@ -142,7 +143,7 @@ void handle_mkdir(int sock, const std::string &directory_name);
  * @param sock The client's socket file descriptor.
  * @param filename The name of the file to send.
  */
-void handle_get(int sock, const std::string &filename);
+void handle_get(int sock, const std::string &filename, ClientSession &session);
 
 
 /**
@@ -151,6 +152,6 @@ void handle_get(int sock, const std::string &filename);
  * @param sock The client's socket file descriptor.
  * @param filename The name of the file to save on the server.
  */
-void handle_put(int sock, const std::string &filename);
+void handle_put(int sock, const std::string &filename, ClientSession &session);
 
 #endif

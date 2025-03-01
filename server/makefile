@@ -8,7 +8,7 @@ CXXFLAGS = -Wall -Wextra -g -pthread -std=c++11 -Iheaders
 TARGET = myftpserver
 
 # Source Files
-SRCS = myftpserver.cpp thread_pool.cpp client_handler.cpp
+SRCS = myftpserver.cpp thread_pool.cpp client_handler.cpp util.cpp
 
 # Object Files
 OBJS = $(SRCS:.cpp=.o)
