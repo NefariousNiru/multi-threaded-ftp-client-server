@@ -12,7 +12,11 @@
 
 #define BUFFER_SIZE 1024
 std::string hostname;
+int tport;
 
+bool remove_file(const std::string &path) {
+    return (remove(path.c_str()) == 0);
+}
 
 std::string receive_response(int sock) {
     char message_buffer[BUFFER_SIZE];
@@ -94,8 +98,21 @@ std::pair<int, int> parse_command_id_data_port(std::string &response) {
 void handle_get(int sock, const std::string &filename) {
     send_command(sock, "get " + filename);
     std::string response = receive_response(sock);
-    std::cout << response;
-    if (response.find("SUCCESS: FILE_TRANSFER_START") == 0) {
+
+    if (response.find("SUCCESS") == std::string::npos) {  // If there is an Error
+        std::cerr << response << "Server is not ready to send" << "\n";
+        return;
+    }
+
+    std::pair<int, int> result = parse_command_id_data_port(response);
+    int command_id = result.first;
+    int data_port = result.second;
+    std::cout << "Command-ID: " << command_id << ", Data Port: " << data_port << std::endl;
+
+    int data_sock;
+    connect_to_server(hostname, data_port, data_sock);
+
+    std::thread get_data_thread ([data_sock, filename] () {
         std::ofstream file(filename, std::ios::binary);
         if (!file.is_open()) {
             std::cerr << "Error: Unable to create local file.\n";
@@ -104,7 +121,7 @@ void handle_get(int sock, const std::string &filename) {
 
         char buffer[BUFFER_SIZE];
         while (true) {
-            ssize_t bytes_received = recv(sock, buffer, BUFFER_SIZE, 0);
+            ssize_t bytes_received = recv(data_sock, buffer, BUFFER_SIZE, 0);
             if (bytes_received <= 0) {
                 break;
             }
@@ -121,9 +138,8 @@ void handle_get(int sock, const std::string &filename) {
 
         file.close();
         std::cout << "File received successfully: " << filename << "\n";
-    } else {
-        std::cerr << response << "\n";
-    }
+    });
+    get_data_thread.detach();
 }
 
 
@@ -227,7 +243,7 @@ int main(int argc, char *argv[]) {
 
     hostname = argv[1];
     int nport = std::stoi(argv[2]);
-    int tport = std::stoi(argv[3]);
+    tport = std::stoi(argv[3]);
 
     int sock, terminate_sock;
     try {

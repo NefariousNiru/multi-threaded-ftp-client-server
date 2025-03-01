@@ -1,4 +1,5 @@
 #include "client_handler.h"
+#include "util.cpp"
 #include <iostream>
 #include <cstring>
 #include <unistd.h>
@@ -25,85 +26,72 @@
 #define BUFFER_SIZE 1024
 std::atomic<int> next_command_id{1};  // Global command ID counter
 extern std::unordered_map<int, bool> active_commands;
+extern std::unordered_map<int, int> command_to_client;
 extern std::mutex command_mutex;
 
 
-bool create_data_socket(int &data_sock_out, int &ephemeral_port_out) {
-    data_sock_out = socket(AF_INET6, SOCK_STREAM, 0);
-    if (data_sock_out == -1) {
-        std::cerr << "Could not create data socket.\n";
-        return false;
+std::string get_full_path(ClientSession &session, const std::string &name) {
+    std::string fullPath = session.currPath;
+    if (fullPath.back() != '/') {
+        fullPath += '/';
+    }
+    fullPath += name;
+    return fullPath;
+}
+
+
+void send_data_get(int sock, int command_ID, const std::string &filename) {
+    std::ifstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        send_response(sock, "ERROR", "Unable to open file.");
+        return;
     }
 
-    // Bind to an ephemeral port (port 0 => ephemeral)
-    sockaddr_in6 addr{};
-    addr.sin6_family = AF_INET6;
-    addr.sin6_addr   = in6addr_any;
-    addr.sin6_port   = 0; // 0 => ephemeral port (OS decides)
-
-    if (bind(data_sock_out, (sockaddr*)&addr, sizeof(addr)) < 0) {
-        std::cerr << "Failed to bind ephemeral data socket.\n";
-        close(data_sock_out);
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(command_mutex);
+        active_commands[command_ID] = true;
+        command_to_client[command_ID] = sock;
     }
 
-    socklen_t addr_len = sizeof(addr);
-    if (getsockname(data_sock_out, (sockaddr*)&addr, &addr_len) < 0) {
-        std::cerr << "Failed to get ephemeral port.\n";
-        close(data_sock_out);
-        return false;
+    char buffer[BUFFER_SIZE];
+    while (file.read(buffer, sizeof(buffer))) {
+        {
+            std::lock_guard<std::mutex> lock(command_mutex);
+            if (!active_commands[command_ID]) {
+                std::cerr << "Transfer aborted for Command-ID: " << command_ID << std::endl;
+                file.close();
+                send_response(sock, "ERROR", "Transfer aborted.");
+                return;
+            }
+        }
+
+        // Binary files - Do not use send_response()
+        ssize_t sent = send(sock, buffer, file.gcount(), 0);
+        if (sent <= 0) {
+            std::cerr << "Error: Failed to send data to client.\n";
+            file.close();
+            return;
+        }
     }
 
-    ephemeral_port_out = ntohs(addr.sin6_port);
-
-    if (listen(data_sock_out, 1) < 0) {
-        std::cerr << "Listen on ephemeral data socket failed.\n";
-        close(data_sock_out);
-        return false;
+    if (file.gcount() > 0) {
+        ssize_t sent = send(sock, buffer, file.gcount(), 0);
+        if (sent <= 0) {
+            std::cerr << "Error: Failed to send final data to client.\n";
+            file.close();
+            return;
+        }
     }
 
-    return true;
-}
+    send_response(sock, "FILE_TRANSFER_END");
 
-bool file_exists(const std::string &path) {
-    struct stat buffer;
-    return (stat(path.c_str(), &buffer) == 0);
-}
+    file.close();
 
-
-bool create_directory(const std::string &path) {
-    return (mkdir(path.c_str(), 0755) == 0);
-}
-
-
-bool remove_file(const std::string &path) {
-    return (remove(path.c_str()) == 0);
-}
-
-
-void send_response_impl(int sock, const std::string &response) {
-    ssize_t bytes_sent = send(sock, response.c_str(), response.size(), 0);
-    if (bytes_sent == -1) {
-        std::cerr << "Error sending response: " << strerror(errno) << std::endl;
+    {
+        std::lock_guard<std::mutex> lock(command_mutex);
+        active_commands.erase(command_ID);
+        command_to_client.erase(command_ID);
     }
-}
-
-
-void send_response(int sock, const std::string &status, const std::string &message) {
-    std::string response = status + ": " + message + "\n";
-    send_response_impl(sock, response);
-}
-
-void send_response(int sock, const std::string &message) {
-    std::string response = message + "\n";
-    send_response_impl(sock, response);
-}
-
-
-std::string trim(const std::string &str) {
-    size_t start = str.find_first_not_of(" \t\n\r");
-    size_t end = str.find_last_not_of(" \t\n\r");
-    return (start == std::string::npos) ? "" : str.substr(start, end - start + 1);
 }
 
 
@@ -117,6 +105,7 @@ void receive_data_put(int sock, int command_ID, const std::string &filename) {
     {
         std::lock_guard<std::mutex> lock(command_mutex);
         active_commands[command_ID] = true;
+        command_to_client[command_ID] = sock;
     }
 
     char buffer[BUFFER_SIZE];
@@ -156,6 +145,7 @@ void receive_data_put(int sock, int command_ID, const std::string &filename) {
     {
         std::lock_guard<std::mutex> lock(command_mutex);
         active_commands.erase(command_ID);
+        command_to_client.erase(command_ID);
     }
 
     if (leftover_data.empty()) {
@@ -168,13 +158,15 @@ void receive_data_put(int sock, int command_ID, const std::string &filename) {
 }
 
 
-void handle_put(int sock, const std::string &filename) {
+void handle_put(int sock, const std::string &filename, ClientSession &session) {
     if (filename.empty()) {
         send_response(sock, "ERROR", "File name not specified.");
         return;
     }
 
-    if (file_exists(filename)) {
+    std::string fullPath = get_full_path(session, filename);
+
+    if (file_exists(fullPath)) {
         send_response(sock, "ERROR", "File with the same name exists.");
         return;
     }
@@ -206,87 +198,68 @@ void handle_put(int sock, const std::string &filename) {
             std::cerr << "Failed to accept data connection.\n";
             return;
         }
-        receive_data_put(data_client_sock, command_ID, filename);
+        receive_data_put(data_client_sock, command_ID, fullPath);
     });
 
     t.detach();
 }
 
 
-void handle_get(int sock, const std::string &filename) {
+void handle_get(int sock, const std::string &filename, ClientSession &session) {
     if (filename.empty()) {
         send_response(sock, "ERROR", "File name not specified.");
         return;
     }
 
-    if (!file_exists(filename)) {
+    std::string fullPath = get_full_path(session, filename);
+
+    if (!file_exists(fullPath)) {
         send_response(sock, "ERROR", "404 - File not found.");
         return;
     }
 
-    std::ifstream file(filename, std::ios::binary);
-    if (!file.is_open()) {
-        send_response(sock, "ERROR", "Unable to open file.");
+    // Create data socket and ephemeral port
+    int data_sock, ephemeral_port;
+    if (!create_data_socket(data_sock, ephemeral_port)) {
+        send_response(sock, "ERROR", "Failed to setup data channel.");
         return;
     }
 
+    // This is the termination command id
     int command_ID = next_command_id++;
-    {
-        std::lock_guard<std::mutex> lock(command_mutex);
-        active_commands[command_ID] = true;
-    }
 
-    send_response(sock, "SUCCESS", "FILE_TRANSFER_START Command-ID: " + std::to_string(command_ID));
+    // Send ephermeral port number + command ID to client
+    std::string msg = "DATA_PORT " + std::to_string(ephemeral_port) + " Command-ID: " + std::to_string(command_ID);
+    send_response(sock, "SUCCESS", msg);
 
-    char buffer[BUFFER_SIZE];
-    while (file.read(buffer, sizeof(buffer))) {
-        {
-            std::lock_guard<std::mutex> lock(command_mutex);
-            if (!active_commands[command_ID]) {
-                std::cerr << "Transfer aborted for Command-ID: " << command_ID << std::endl;
-                file.close();
-                send_response(sock, "ERROR", "Transfer aborted.");
-                return;
-            }
-        }
+    std::thread t([=](){
+        sockaddr_in6 data_client_addr;
+        socklen_t len = sizeof(data_client_addr);
 
-        // Binary files - Do not use send_response()
-        ssize_t sent = send(sock, buffer, file.gcount(), 0);
-        if (sent <= 0) {
-            std::cerr << "Error: Failed to send data to client.\n";
-            file.close();
+        int data_client_sock = accept(data_sock, (sockaddr*)&data_client_addr, &len);
+        close(data_sock); // Once we accept connection we dont need to lsiten anymore so close it
+
+        if (data_client_sock < 0) {
+            std::cerr << "Failed to accept data connection.\n";
             return;
         }
-    }
+        send_data_get(data_client_sock, command_ID, fullPath);
+    });
 
-    if (file.gcount() > 0) {
-        ssize_t sent = send(sock, buffer, file.gcount(), 0);
-        if (sent <= 0) {
-            std::cerr << "Error: Failed to send final data to client.\n";
-            file.close();
-            return;
-        }
-    }
-
-    send_response(sock, "FILE_TRANSFER_END");
-
-    file.close();
-
-    {
-        std::lock_guard<std::mutex> lock(command_mutex);
-        active_commands.erase(command_ID);
-    }
+    t.detach();
 }
 
 
-void handle_mkdir(int sock, const std::string &directory_name) {
+void handle_mkdir(int sock, const std::string &directory_name, ClientSession &session) {
     if (directory_name.empty()) {
         send_response(sock, "ERROR", "Directory name not specified.");
         return;
     }
 
+    std::string fullPath = get_full_path(session, directory_name);
+
     struct stat path_stat;
-    if (stat(directory_name.c_str(), &path_stat) == 0) {
+    if (stat(fullPath.c_str(), &path_stat) == 0) {
         if (S_ISDIR(path_stat.st_mode)) {
             send_response(sock, "ERROR", "Directory already exists.");
         } else {
@@ -295,7 +268,7 @@ void handle_mkdir(int sock, const std::string &directory_name) {
         return;
     }
 
-    if (create_directory(directory_name)) {
+    if (create_directory(fullPath)) {
         send_response(sock, "SUCCESS", "Directory created successfully.");
     } else {
         std::cerr << "Error creating directory: " << strerror(errno) << std::endl;
@@ -304,40 +277,83 @@ void handle_mkdir(int sock, const std::string &directory_name) {
 }
 
 
-void handle_delete(int sock, const std::string &filename) {
+void handle_delete(int sock, const std::string &filename, ClientSession &session) {
     if (filename.empty()) {
         send_response(sock, "ERROR", "File name not specified.");
         return;
     }
 
+    std::string fullPath = get_full_path(session, filename);
+
     struct stat file_stat;
-    if (stat(filename.c_str(), &file_stat) == 0 && S_ISDIR(file_stat.st_mode)) {
+    if (stat(fullPath.c_str(), &file_stat) == 0 && S_ISDIR(file_stat.st_mode)) {
         send_response(sock, "ERROR", "Specified path is a directory, not a file.");
         return;
     }
 
-    if (!file_exists(filename)) {
+    if (!file_exists(fullPath)) {
         send_response(sock, "ERROR", "404 - File not found.");
         return;
     }
 
-    if (remove_file(filename)) {
+    if (remove_file(fullPath)) {
         send_response(sock, "SUCCESS", "File deleted.");
     } else {
-        std::cerr << "Error deleting file " << strerror(errno) << std::endl;
+        std::cerr << "Error deleting file: " << strerror(errno) << std::endl;
         send_response(sock, "ERROR", "Unable to delete file.");
     }
 }
 
 
-void handle_cd(int sock, const std::string &directory) {
+void handle_cd(int sock, const std::string &directory, ClientSession &session) {
     if (directory.empty()) {
         send_response(sock, "ERROR", "Directory not specified.");
         return;
     }
 
+    std::string newPath;
+    
+    // Handle absolute path
+    if (directory[0] == '/') {
+        newPath = directory;
+    } 
+    // Handle relative paths
+    else {
+        // Handle ".." (go up one directory)
+        if (directory == "..") {
+            size_t lastSlash = session.currPath.find_last_of('/');
+            if (lastSlash == 0) {
+                // We're at root directory
+                newPath = "/";
+            } else if (lastSlash != std::string::npos) {
+                newPath = session.currPath.substr(0, lastSlash);
+            } else {
+                newPath = session.currPath; // Stay in current directory if path is malformed
+            }
+        } 
+        // Handle "." (current directory)
+        else if (directory == ".") {
+            newPath = session.currPath;
+        } 
+        // Handle other relative paths
+        else {
+            // Ensure path ends with '/' for proper concatenation
+            if (session.currPath.back() != '/') {
+                newPath = session.currPath + "/" + directory;
+            } else {
+                newPath = session.currPath + directory;
+            }
+        }
+    }
+
+    // Normalize path to ensure it doesn't have trailing slash (except for root)
+    if (newPath.length() > 1 && newPath.back() == '/') {
+        newPath.pop_back();
+    }
+
+    // Check if new path exists and is a directory
     struct stat dir_stat;
-    if (stat(directory.c_str(), &dir_stat) != 0) {
+    if (stat(newPath.c_str(), &dir_stat) != 0) {
         send_response(sock, "ERROR", "Directory not found.");
         return;
     }
@@ -347,17 +363,14 @@ void handle_cd(int sock, const std::string &directory) {
         return;
     }
 
-    if (chdir(directory.c_str()) == 0) {
-        send_response(sock, "Directory changed.");
-    } else {
-        std::cerr << "Error changing directory: " << strerror(errno) << std::endl;
-        send_response(sock, "ERROR", "Unable to change directory.");
-    }
+    // Update the session's current path
+    session.currPath = newPath;
+    send_response(sock, "OK", "Directory changed to " + session.currPath);
 }
 
 
-void handle_ls(int sock) {
-    DIR *dir = opendir(".");
+void handle_ls(int sock, ClientSession &session) {
+    DIR *dir = opendir(session.currPath.c_str());
     if (dir == nullptr) {
         std::cerr << "Error opening directory: " << strerror(errno) << std::endl;
         send_response(sock, "ERROR", "Unable to open directory.");
@@ -385,14 +398,8 @@ void handle_ls(int sock) {
 }
 
 
-void handle_pwd(int sock) {
-    char cwd[BUFFER_SIZE];
-    if (getcwd(cwd, sizeof(cwd)) != nullptr) {
-        send_response(sock, std::string(cwd));
-    } else {
-        std::cerr << "Error retrieving current directory: " << strerror(errno) << std::endl;
-        send_response(sock, "ERROR", "Unable to retrieve current directory.");
-    }
+void handle_pwd(int sock, ClientSession &session) {
+    send_response(sock, session.currPath);
 }
 
 
@@ -400,21 +407,21 @@ CommandMap create_command_map() {
     CommandMap command_map;
 
     // Commands without arguments
-    command_map["pwd"] = [](int sock, const std::string &) { handle_pwd(sock); };
-    command_map["ls"] = [](int sock, const std::string &) { handle_ls(sock); };
+    command_map["pwd"] = [](int sock, const std::string &, ClientSession &session) { handle_pwd(sock, session); };
+    command_map["ls"] = [](int sock, const std::string &, ClientSession &session) { handle_ls(sock, session); };
 
     // Commands with arguments
-    command_map["cd"] = [](int sock, const std::string &arg) { handle_cd(sock, arg); };
-    command_map["mkdir"] = [](int sock, const std::string &arg) { handle_mkdir(sock, arg); };
-    command_map["delete"] = [](int sock, const std::string &arg) { handle_delete(sock, arg); };
-    command_map["get"] = [](int sock, const std::string &arg) { handle_get(sock, arg); };
-    command_map["put"] = [](int sock, const std::string &arg) { handle_put(sock, arg); };
+    command_map["cd"] = [](int sock, const std::string &arg, ClientSession &session) { handle_cd(sock, arg, session); };
+    command_map["mkdir"] = [](int sock, const std::string &arg, ClientSession &session) { handle_mkdir(sock, arg, session); };
+    command_map["delete"] = [](int sock, const std::string &arg, ClientSession &session) { handle_delete(sock, arg, session); };
+    command_map["get"] = [](int sock, const std::string &arg, ClientSession &session) { handle_get(sock, arg, session); };
+    command_map["put"] = [](int sock, const std::string &arg, ClientSession &session) { handle_put(sock, arg, session); };
 
     return command_map;
 }
 
 
-void execute_command(const std::string &command, int sock) {
+void execute_command(const std::string &command, int sock, ClientSession &session) {
     // Create the command map
     static CommandMap command_map = create_command_map();
 
@@ -426,7 +433,7 @@ void execute_command(const std::string &command, int sock) {
     // Find the command in the map
     auto it = command_map.find(cmd);
     if (it != command_map.end()) {
-        it->second(sock, arg);
+        it->second(sock, arg, session);
     } else {
         send_response(sock, "ERROR", "Invalid command.");
     }
@@ -436,6 +443,15 @@ void execute_command(const std::string &command, int sock) {
 void handle_client(int sock) {
     const char *welcome_msg = "\033[32mConnected to MyFTPServer!\033[0m";
     send_response(sock, welcome_msg);
+
+    ClientSession session;
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        session.currPath = cwd;
+    } else {
+        perror("getcwd failed");
+        session.currPath = "./";
+    }
 
     char buffer[BUFFER_SIZE];
     while (true) {
@@ -459,7 +475,7 @@ void handle_client(int sock) {
             break;
         } 
 
-        execute_command(command, sock);
+        execute_command(command, sock, session);
     }
 
     close(sock);
